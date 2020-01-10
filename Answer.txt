@@ -1,0 +1,43 @@
+Dear Maxime DUVAL and Raphael GINOULHAC,
+
+Thank you for sending your project proposal. Sorry for the late reply,
+as your project belongs more to the ‘self proposed’ topics I had to
+discuss it with the supervisor.
+
+I am very much interested in combining NAU/NMU and RL. However, your
+specification need to be more precise.
+
+The following steps were not clear to me in your proposal:
+
+You are planning to extend [2] with [1] - considering that [2] is
+implementation used in [1], it is not clear to me what you are planning
+to extend. Can you specify it more?
+
+Please specify what you mean by ‘classical future prediction tasks’.
+
+The step ’integration of the proposed blocks into RL’ is quite a
+general specification. What exactly would you like to solve/study? What
+quantitative evaluations will you perform?
+
+One of the possible reasons for using NAU/NMU is a generalization. The
+policy composed of NAU/NMU units might generalize to the unseen
+environments better than NN policy because it will learn actual
+equation for control. This approach might provide an alternative
+solution to the symbolic regression in RL [3,4].
+For example, consider the inverted pendulum with different masses (mass
+is part of the state) trained by domain randomization. If we learn the
+NN policy for masses below 1 kg, it is unlikely that the policy will
+work for larger mass, because it was not part of the training. On the
+other side, due to the extrapolation capability of NAU/NMU, the policy
+which consists of them might learn the equation and work for larger
+mass.
+
+Would you be interested in performing such analysis?
+
+In addition, please propose the division of work and the
+software/algorithms you plan to use.
+
+Best regards,
+Vladimir Petrik
+[3] https://arxiv.org/pdf/1903.09688.pdf
+[4] https://arxiv.org/pdf/1903.11483.pdf
