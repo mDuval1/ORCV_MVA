@@ -416,10 +416,11 @@ class A2CAgentRandom(A2CAgent):
         return reward_episode
 
 
-def eval_agent(agent, n_eval, min_mass, max_mass):
+def eval_agent(agent, n_eval, min_mass, max_mass, disp=False):
     rws = []
-    for _ in tqdm.tqdm_notebook(range(n_eval)):
+    for _ in tqdm.tqdm_notebook(range(n_eval), disable=not disp):
         r = agent.evaluate(min_mass, max_mass)
         rws.append(r)
     rws = np.array(rws)
-    print(f'Mean success : {rws.mean():.2f} +- {rws.std():.2f}')
+    if disp: print(f'Mean success : {rws.mean():.2f} +- {rws.std():.2f}')
+    return rws
