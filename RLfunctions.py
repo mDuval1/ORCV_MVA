@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F 
+import torch.nn.functional as F
 from torch import optim
 
 import numpy as np
@@ -30,6 +30,7 @@ from IPython.display import clear_output
 def make_seed(seed):
     np.random.seed(seed=seed)
     torch.manual_seed(seed=seed)
+
 
 def show_video(directory):
     html = []
@@ -55,9 +56,10 @@ class ValueNetwork(nn.Module):
         out = F.relu(self.fc2(out))
         out = self.fc3(out)
         return out
-    
+
     def predict(self, x):
         return self(x).detach().numpy()[0]
+
 
 class ActorNetwork(nn.Module):
 
@@ -72,9 +74,10 @@ class ActorNetwork(nn.Module):
         out = F.relu(self.fc2(out))
         out = F.softmax(self.fc3(out), dim=-1)
         return out
-    
+
     def select_action(self, x):
         return torch.multinomial(self(x), 1).detach().numpy()
+
 
 class A2CAgent:
 
@@ -85,14 +88,16 @@ class A2CAgent:
         self.env.seed(config['seed'])
         self.monitor_env = Monitor(self.env, "./gym-results", force=True, video_callable=lambda episode: True)
         self.gamma = config['gamma']
-        
+
         # Our two networks
         self.value_network = ValueNetwork(self.env.observation_space.shape[0], 16, 1)
         self.actor_network = ActorNetwork(self.env.observation_space.shape[0], 16, self.env.action_space.n)
-        
+
         # Their optimizers
-        self.value_network_optimizer = optim.RMSprop(self.value_network.parameters(), lr=config['value_network']['learning_rate'])
-        self.actor_network_optimizer = optim.RMSprop(self.actor_network.parameters(), lr=config['actor_network']['learning_rate'])
+        self.value_network_optimizer = optim.RMSprop(self.value_network.parameters(),
+                                                     lr=config['value_network']['learning_rate'])
+        self.actor_network_optimizer = optim.RMSprop(self.actor_network.parameters(),
+                                                     lr=config['actor_network']['learning_rate'])
 
     def _compute_returns(self, rewards):
         """Returns the cumulative discounted rewards at each time step
@@ -116,9 +121,9 @@ class A2CAgent:
         gamma_arr = np.full(n_r, self.gamma)
         exponents = np.arange(n_r)[::-1]
         for i, r in enumerate(rewards):
-            array[:i+1] += r * np.full(i+1, self.gamma) ** exponents[n_r-i-1:]
+            array[:i + 1] += r * np.full(i + 1, self.gamma) ** exponents[n_r - i - 1:]
         return array
-        
+
     # Hint: use it during training_batch
     def _returns_advantages(self, rewards, dones, values, next_value):
         """Returns the cumulative discounted rewards at each time step
@@ -149,12 +154,12 @@ class A2CAgent:
             returns = np.zeros(rewards.shape)
             start = 0
             for j, stop in enumerate(stops):
-                if j == len(stops)-1:
+                if j == len(stops) - 1:
                     returns[start:stop] = self._compute_returns(np.r_[rewards[start:stop], next_value])[:-1]
                 else:
                     returns[start:stop] = self._compute_returns(rewards[start:stop])
-                start = stop        
-        # advantages = returns + self.gamma * np.r_[values[1:], next_value] - values
+                start = stop
+                # advantages = returns + self.gamma * np.r_[values[1:], next_value] - values
         advantages = returns - values
         return returns, advantages
 
@@ -180,8 +185,8 @@ class A2CAgent:
             # Lets collect one batch
             for i in range(batch_size):
                 observations[i] = observation
-                actions[i] = self.actor_network.select_action(torch.tensor(observations[i] , dtype=torch.float))
-                values[i] = self.value_network.predict(torch.tensor(observations[i] , dtype=torch.float))
+                actions[i] = self.actor_network.select_action(torch.tensor(observations[i], dtype=torch.float))
+                values[i] = self.value_network.predict(torch.tensor(observations[i], dtype=torch.float))
                 # step
                 observation, reward, done, _ = self.env.step(actions[i])
                 dones[i] = done
@@ -207,18 +212,21 @@ class A2CAgent:
             # Test it every 50 epochs
             if epoch % 50 == 0 or epoch == epochs - 1:
                 rewards_test.append(np.array([self.evaluate() for _ in range(50)]))
-                print(f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
+                print(
+                    f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
 
                 # Early stopping
-                if rewards_test[-1].mean() > 490 and epoch != epochs -1:
+                if rewards_test[-1].mean() > 490 and epoch != epochs - 1:
                     print('Early stopping !')
                     break
                 observation = self.env.reset()
-                    
+
         # Plotting
-        r = pd.DataFrame((itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))), columns=['Epoch', 'Reward'])
+        r = pd.DataFrame(
+            (itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))),
+            columns=['Epoch', 'Reward'])
         sns.lineplot(x="Epoch", y="Reward", data=r, ci='sd');
-        
+
         print(f'The trainnig was done over a total of {episode_count} episodes')
 
     def optimize_model(self, observations, actions, returns, advantages, nb_traj):
@@ -234,11 +242,10 @@ class A2CAgent:
         Policies = self.actor_network(torch.tensor(observations, dtype=torch.float))
         Policies_action = torch.stack([x[actions[i]] for i, x in enumerate(Policies)])
         loss_action = - torch.sum(torch.tensor(advantages, dtype=torch.float) * torch.log(Policies_action) +  # actor
-                                  0.001 * Policies_action * torch.log(Policies_action)) / nb_traj # entropy
+                                  0.001 * Policies_action * torch.log(Policies_action)) / nb_traj  # entropy
         self.actor_network_optimizer.zero_grad()
         loss_action.backward()
         self.actor_network_optimizer.step()
-        
 
     def evaluate(self, render=False):
         env = self.monitor_env if render else self.env
@@ -253,14 +260,14 @@ class A2CAgent:
             observation, reward, done, info = env.step(int(action))
             observation = torch.tensor(observation, dtype=torch.float)
             reward_episode += reward
-            
+
         env.close()
         if render:
             show_video("./gym-results")
             print(f'Reward: {reward_episode}')
         return reward_episode
 
-    
+
 class RandomWrapper(gym.Wrapper):
     def __init__(self, env, min_mass, max_mass):
         super().__init__(env)
@@ -269,14 +276,15 @@ class RandomWrapper(gym.Wrapper):
         self.max_mass = max_mass
         self.mass = np.random.uniform(low=self.min_mass, high=self.max_mass)
         self.env.env.masspole = self.mass
-    
+
     def reset(self):
-#         return self.env.reset()
+        #         return self.env.reset()
         observation = self.env.reset()
         self.mass = np.random.uniform(self.min_mass, self.max_mass)
         self.env.env.masspole = self.mass
         observation = np.insert(observation, len(observation), self.mass)
         return observation
+
 
 class A2CAgentRandom(A2CAgent):
 
@@ -285,14 +293,16 @@ class A2CAgentRandom(A2CAgent):
         self.env = RandomWrapper(self.env, *range_train)
         self.range_train = range_train
         self.range_eval = range_eval
-        
+
         # Our two networks
         self.value_network = ValueNetwork(self.env.observation_space.shape[0] + 1, 16, 1)
         self.actor_network = ActorNetwork(self.env.observation_space.shape[0] + 1, 16, self.env.action_space.n)
-        
+
         # Their optimizers
-        self.value_network_optimizer = optim.RMSprop(self.value_network.parameters(), lr=config['value_network']['learning_rate'])
-        self.actor_network_optimizer = optim.RMSprop(self.actor_network.parameters(), lr=config['actor_network']['learning_rate'])
+        self.value_network_optimizer = optim.RMSprop(self.value_network.parameters(),
+                                                     lr=config['value_network']['learning_rate'])
+        self.actor_network_optimizer = optim.RMSprop(self.actor_network.parameters(),
+                                                     lr=config['actor_network']['learning_rate'])
 
     def training_batch(self, epochs, batch_size):
         """Perform a training by batch
@@ -308,7 +318,7 @@ class A2CAgentRandom(A2CAgent):
         actions = np.empty((batch_size,), dtype=np.int)
         dones = np.empty((batch_size,), dtype=np.bool)
         rewards, values = np.empty((2, batch_size), dtype=np.float)
-        observations = np.empty((batch_size,) + (self.env.observation_space.shape[0]+1, ), dtype=np.float)
+        observations = np.empty((batch_size,) + (self.env.observation_space.shape[0] + 1,), dtype=np.float)
         observation = self.env.reset()
         rewards_test = []
 
@@ -316,8 +326,8 @@ class A2CAgentRandom(A2CAgent):
             # Lets collect one batch
             for i in range(batch_size):
                 observations[i] = observation
-                actions[i] = self.actor_network.select_action(torch.tensor(observations[i] , dtype=torch.float))
-                values[i] = self.value_network.predict(torch.tensor(observations[i] , dtype=torch.float))
+                actions[i] = self.actor_network.select_action(torch.tensor(observations[i], dtype=torch.float))
+                values[i] = self.value_network.predict(torch.tensor(observations[i], dtype=torch.float))
                 # step
                 observation, reward, done, _ = self.env.step(actions[i])
                 if len(observation) == self.env.observation_space.shape[0]:
@@ -326,7 +336,7 @@ class A2CAgentRandom(A2CAgent):
                 rewards[i] = reward
                 if dones[i]:
                     observation = self.env.reset()
-#                 print(self.env.mass)
+            #                 print(self.env.mass)
 
             # If our episode didn't end on the last step we need to compute the value for the last state
             if dones[-1]:
@@ -346,19 +356,22 @@ class A2CAgentRandom(A2CAgent):
             # Test it every 50 epochs
             if epoch % 50 == 0 or epoch == epochs - 1:
                 rewards_test.append(np.array([self.evaluate(*self.range_eval) for _ in range(50)]))
-                print(f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
+                print(
+                    f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
 
                 # Early stopping
-                if rewards_test[-1].mean() > 490 and epoch != epochs -1:
+                if rewards_test[-1].mean() > 490 and epoch != epochs - 1:
                     print('Early stopping !')
                     break
                 observation = self.env.reset()
-                    
+
         # Plotting
         plt.figure()
-        r = pd.DataFrame((itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))), columns=['Epoch', 'Reward'])
+        r = pd.DataFrame(
+            (itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))),
+            columns=['Epoch', 'Reward'])
         sns.lineplot(x="Epoch", y="Reward", data=r, ci='sd')
-        
+
         print(f'The trainnig was done over a total of {episode_count} episodes')
 
     def optimize_model(self, observations, actions, returns, advantages, nb_traj):
@@ -374,11 +387,10 @@ class A2CAgentRandom(A2CAgent):
         Policies = self.actor_network(torch.tensor(observations, dtype=torch.float))
         Policies_action = torch.stack([x[actions[i]] for i, x in enumerate(Policies)])
         loss_action = - torch.sum(torch.tensor(advantages, dtype=torch.float) * torch.log(Policies_action) +  # actor
-                                  0.001 * Policies_action * torch.log(Policies_action)) / nb_traj # entropy
+                                  0.001 * Policies_action * torch.log(Policies_action)) / nb_traj  # entropy
         self.actor_network_optimizer.zero_grad()
         loss_action.backward()
         self.actor_network_optimizer.step()
-        
 
     def evaluate(self, min_mass, max_mass):
         env = RandomWrapper(self.env.env, min_mass, max_mass)
@@ -396,13 +408,12 @@ class A2CAgentRandom(A2CAgent):
                 observation = np.insert(observation, len(observation), self.env.mass)
             observation = torch.tensor(observation, dtype=torch.float)
             reward_episode += reward
-            
+
         env.close()
         # if render:
         #     show_video("./gym-results")
         #     print(f'Reward: {reward_episode}')
         return reward_episode
-
 
 
 def eval_agent(agent, n_eval, min_mass, max_mass):
