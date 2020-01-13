@@ -17,6 +17,7 @@ import pandas as pd
 import itertools
 import matplotlib.pyplot as plt
 import seaborn as sns
+import tqdm
 
 import gym
 from gym.wrappers import Monitor
@@ -401,3 +402,13 @@ class A2CAgentRandom(A2CAgent):
         #     show_video("./gym-results")
         #     print(f'Reward: {reward_episode}')
         return reward_episode
+
+
+
+def eval_agent(agent, n_eval, min_mass, max_mass):
+    rws = []
+    for _ in tqdm.tqdm_notebook(range(n_eval)):
+        r = agent.evaluate(min_mass, max_mass)
+        rws.append(r)
+    rws = np.array(rws)
+    print(f'Mean success : {rws.mean():.2f} +- {rws.std():.2f}')
