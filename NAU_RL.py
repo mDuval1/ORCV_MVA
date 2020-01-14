@@ -31,8 +31,6 @@ from IPython.display import clear_output
 from RLfunctions import A2CAgentRandom
 
 
-
-
 class NetworkNAURNN(stable_nalu.abstract.ExtendedTorchModule):
     UNIT_NAMES = stable_nalu.layer.GeneralizedCell.UNIT_NAMES
 
@@ -56,17 +54,17 @@ class NetworkNAURNN(stable_nalu.abstract.ExtendedTorchModule):
             self.zero_state = torch.nn.Parameter(torch.Tensor(self.hidden_size))
 
         self.recurent_cell = stable_nalu.layer.GeneralizedCell(input_size, self.hidden_size,
-                                             unit_name,
-                                             writer=self.writer,
-                                             name='recurrent_layer',
-                                             **kwargs)
+                                                               unit_name,
+                                                               writer=self.writer,
+                                                               name='recurrent_layer',
+                                                               **kwargs)
         self.output_layer = stable_nalu.layer.GeneralizedLayer(self.hidden_size, output_size,
-                                            'linear'
-                                                if unit_name in {'GRU', 'LSTM', 'RNN-tanh', 'RNN-ReLU'}
-                                                else unit_name,
-                                             writer=self.writer,
-                                             name='output_layer',
-                                             **kwargs)
+                                                               'linear'
+                                                               if unit_name in {'GRU', 'LSTM', 'RNN-tanh', 'RNN-ReLU'}
+                                                               else unit_name,
+                                                               writer=self.writer,
+                                                               name='output_layer',
+                                                               **kwargs)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -111,14 +109,15 @@ class NetworkNAURNN(stable_nalu.abstract.ExtendedTorchModule):
         return 'unit_name={}, input_size={}'.format(
             self.unit_name, self.input_size
         )
-    
+
     def predict(self, x):
         return self(x).detach().numpy()
+
 
 class NetworkNAU(stable_nalu.abstract.ExtendedTorchModule):
     UNIT_NAMES = stable_nalu.layer.GeneralizedLayer.UNIT_NAMES
 
-    def __init__(self, unit_name, input_size=100, hidden_size=2, first_layer=None, nac_mul='none', 
+    def __init__(self, unit_name, input_size=100, hidden_size=2, first_layer=None, nac_mul='none',
                  output_size=1, eps=1e-7, writer=None, actor=False, **kwargs):
         super().__init__('network', writer=writer, **kwargs)
         self.unit_name = unit_name
@@ -131,19 +130,19 @@ class NetworkNAU(stable_nalu.abstract.ExtendedTorchModule):
 
         if hasattr(self.hidden_size, '__iter__'):
             self.layers = [stable_nalu.layer.GeneralizedLayer(input_size, hidden_size[0],
-                           unit_name, writer=self.writer, name='layer_1',
-                           eps=eps, **kwargs)]
-            for i in range(len(hidden_size)-1):
+                                                              unit_name, writer=self.writer, name='layer_1',
+                                                              eps=eps, **kwargs)]
+            for i in range(len(hidden_size) - 1):
                 self.layers.append(
-                    stable_nalu.layer.GeneralizedLayer(hidden_size[i], hidden_size[i+1],
-                           unit_name, writer=self.writer, name=f'layer_{i+2}',
-                           eps=eps, **kwargs)
+                    stable_nalu.layer.GeneralizedLayer(hidden_size[i], hidden_size[i + 1],
+                                                       unit_name, writer=self.writer, name=f'layer_{i + 2}',
+                                                       eps=eps, **kwargs)
                 )
             self.layers.append(
-                    stable_nalu.layer.GeneralizedLayer(hidden_size[-1], output_size,
-                           'linear', writer=self.writer, name=f'layer_{i+2}',
-                           eps=eps, **kwargs)
-                )
+                stable_nalu.layer.GeneralizedLayer(hidden_size[-1], output_size,
+                                                   'linear', writer=self.writer, name=f'layer_{i + 2}',
+                                                   eps=eps, **kwargs)
+            )
 
         else:
             if first_layer is not None:
@@ -156,21 +155,19 @@ class NetworkNAU(stable_nalu.abstract.ExtendedTorchModule):
                 unit_name_2 = unit_name
 
             self.layer_1 = stable_nalu.layer.GeneralizedLayer(input_size, hidden_size,
-                                            unit_name_1,
-                                            writer=self.writer,
-                                            name='layer_1',
-                                            eps=eps, **kwargs)
-
-
+                                                              unit_name_1,
+                                                              writer=self.writer,
+                                                              name='layer_1',
+                                                              eps=eps, **kwargs)
 
             self.layer_2 = stable_nalu.layer.GeneralizedLayer(hidden_size, output_size,
-                                            'linear' if unit_name_2 in stable_nalu.layer.BasicLayer.ACTIVATIONS else unit_name_2,
-                                            writer=self.writer,
-                                            name='layer_2',
-                                            eps=eps, **kwargs)
+                                                              'linear' if unit_name_2 in stable_nalu.layer.BasicLayer.ACTIVATIONS else unit_name_2,
+                                                              writer=self.writer,
+                                                              name='layer_2',
+                                                              eps=eps, **kwargs)
         self.reset_parameters()
         self.z_1_stored = None
-        
+
     def parameters(self):
         if hasattr(self.hidden_size, '__iter__'):
             prms = []
@@ -231,10 +228,10 @@ class NetworkNAU(stable_nalu.abstract.ExtendedTorchModule):
         return 'unit_name={}, input_size={}'.format(
             self.unit_name, self.input_size
         )
-    
+
     def predict(self, x):
         return self(x).detach().numpy().flatten()
-    
+
     def select_action(self, x):
         return torch.multinomial(self(x), 1).detach().numpy().flatten()
 
@@ -251,7 +248,7 @@ class A2CAgentRNN(A2CAgentRandom):
                                                      lr=config['actor_network']['learning_rate'])
         self.recurrent = LSTM
         self.lambda_reg = reg
-        
+
     def optimize_model(self, observations, actions, returns, advantages, nb_traj):
         # Optimize value function
         # MSE for the values
@@ -267,13 +264,13 @@ class A2CAgentRNN(A2CAgentRandom):
         Policies = self.actor_network(torch.tensor(observations, dtype=torch.float))
         Policies_action = torch.stack([x[actions[i]] for i, x in enumerate(Policies)])
         loss_action = - torch.sum(torch.tensor(advantages, dtype=torch.float) * torch.log(Policies_action) +  # actor
-                                  0.001 * Policies_action * torch.log(Policies_action)) / nb_traj # entropy
+                                  0.001 * Policies_action * torch.log(Policies_action)) / nb_traj  # entropy
         if hasattr(self.actor_network, 'regualizer'):
             loss_action += self.actor_network.regualizer()['W']
         self.actor_network_optimizer.zero_grad()
         loss_action.backward()
         self.actor_network_optimizer.step()
-        
+
     def training_batch(self, epochs, batch_size):
         """Perform a training by batch
 
@@ -288,7 +285,7 @@ class A2CAgentRNN(A2CAgentRandom):
         actions = np.empty((batch_size,), dtype=np.int)
         dones = np.empty((batch_size,), dtype=np.bool)
         rewards, values = np.empty((2, batch_size), dtype=np.float)
-        observations = np.empty((batch_size,) + (self.env.observation_space.shape[0]+1, ), dtype=np.float)
+        observations = np.empty((batch_size,) + (self.env.observation_space.shape[0] + 1,), dtype=np.float)
         observation = self.env.reset()
         rewards_test = []
 
@@ -296,8 +293,8 @@ class A2CAgentRNN(A2CAgentRandom):
             # Lets collect one batch
             for i in range(batch_size):
                 observations[i] = observation
-                actions[i] = self.actor_network.select_action(torch.tensor(observations[i] , dtype=torch.float))
-    #                 values[i] = self.value_network.predict(torch.tensor(observations[i] , dtype=torch.float))
+                actions[i] = self.actor_network.select_action(torch.tensor(observations[i], dtype=torch.float))
+                #                 values[i] = self.value_network.predict(torch.tensor(observations[i] , dtype=torch.float))
                 # step
                 observation, reward, done, _ = self.env.step(actions[i])
                 if len(observation) == self.env.observation_space.shape[0]:
@@ -306,8 +303,8 @@ class A2CAgentRNN(A2CAgentRandom):
                 rewards[i] = reward
                 if dones[i]:
                     observation = self.env.reset()
-    #    print(self.env.mass)
-            
+            #    print(self.env.mass)
+
             all_observe = torch.tensor(np.concatenate((observations, observation[None])), dtype=torch.float)
             all_values = self.value_network.predict(all_observe)
             values = all_values[:-1]
@@ -330,17 +327,20 @@ class A2CAgentRNN(A2CAgentRandom):
             # Test it every 50 epochs
             if epoch % 50 == 0 or epoch == epochs - 1:
                 rewards_test.append(np.array([self.evaluate(*self.range_eval) for _ in range(50)]))
-                print(f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
+                print(
+                    f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
 
                 # Early stopping
-                if rewards_test[-1].mean() > 490 and epoch != epochs -1:
+                if rewards_test[-1].mean() > 490 and epoch != epochs - 1:
                     print('Early stopping !')
                     break
                 observation = self.env.reset()
-                    
+
         # Plotting
         plt.figure()
-        r = pd.DataFrame((itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))), columns=['Epoch', 'Reward'])
+        r = pd.DataFrame(
+            (itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))),
+            columns=['Epoch', 'Reward'])
         sns.lineplot(x="Epoch", y="Reward", data=r, ci='sd')
-        
+
         print(f'The training was done over a total of {episode_count} episodes')
