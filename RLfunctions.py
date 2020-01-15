@@ -58,7 +58,7 @@ class ValueNetwork(nn.Module):
         return out
 
     def predict(self, x):
-        return self(x).detach().numpy()[0]
+        return self(x).detach().numpy()
 
 
 class ActorNetwork(nn.Module):
@@ -285,6 +285,11 @@ class RandomWrapper(gym.Wrapper):
         observation = np.insert(observation, len(observation), self.mass)
         return observation
 
+    def step(self, action):
+        observ, reward, done, arg = super().step(action)
+        observ = np.insert(observ, len(observ), self.mass)
+        return observ, reward, done, arg
+
 
 class A2CAgentRandom(A2CAgent):
 
@@ -321,6 +326,7 @@ class A2CAgentRandom(A2CAgent):
         observations = np.empty((batch_size,) + (self.env.observation_space.shape[0] + 1,), dtype=np.float)
         observation = self.env.reset()
         rewards_test = []
+
 
         for epoch in range(epochs):
             # Lets collect one batch
@@ -392,27 +398,36 @@ class A2CAgentRandom(A2CAgent):
         loss_action.backward()
         self.actor_network_optimizer.step()
 
-    def evaluate(self, min_mass, max_mass):
+    def evaluate(self, min_mass, max_mass, render=False):
         env = RandomWrapper(self.env.env, min_mass, max_mass)
+        if render:
+            env = Monitor(env, "./gym-results", force=True, video_callable=lambda episode: True)
         observation = env.reset()
         observation = torch.tensor(observation, dtype=torch.float)
         reward_episode = 0
         done = False
         # print(env.mass)
-
-        while not done:
-            policy = self.actor_network(observation)
-            action = torch.multinomial(policy, 1)
-            observation, reward, done, info = env.step(int(action))
-            if len(observation) == self.env.observation_space.shape[0]:
-                observation = np.insert(observation, len(observation), self.env.mass)
-            observation = torch.tensor(observation, dtype=torch.float)
-            reward_episode += reward
+        move_to_gpu = False
+        if hasattr(self, 'gpu'):
+            if self.gpu:
+                move_to_gpu = True
+        with torch.no_grad():
+            while not done:
+                if move_to_gpu:
+                    observation = observation.cuda()
+                policy = self.actor_network(observation)
+                action = torch.multinomial(policy, 1)
+                observation, reward, done, info = env.step(int(action))
+                if len(observation) == self.env.observation_space.shape[0]:
+                    observation = np.insert(observation, len(observation), self.env.mass)
+                observation = torch.tensor(observation, dtype=torch.float)
+                reward_episode += reward
 
         env.close()
-        # if render:
-        #     show_video("./gym-results")
-        #     print(f'Reward: {reward_episode}')
+        if render:
+            show_video("./gym-results")
+            print(f'Reward: {reward_episode}')
+            print(f'masspole : {env.env.env.masspole:.2f}')
         return reward_episode
 
 

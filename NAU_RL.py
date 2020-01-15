@@ -28,7 +28,7 @@ from pyvirtualdisplay import Display
 from IPython import display as ipythondisplay
 from IPython.display import clear_output
 
-from RLfunctions import A2CAgentRandom
+from RLfunctions import *
 
 
 class NetworkNAURNN(stable_nalu.abstract.ExtendedTorchModule):
@@ -230,10 +230,10 @@ class NetworkNAU(stable_nalu.abstract.ExtendedTorchModule):
         )
 
     def predict(self, x):
-        return self(x).detach().numpy().flatten()
-
+        return self(x).detach().cpu().numpy().flatten()
+    
     def select_action(self, x):
-        return torch.multinomial(self(x), 1).detach().numpy().flatten()
+        return torch.multinomial(self(x), 1).detach().cpu().numpy().flatten()
 
 
 class A2CAgentRNN(A2CAgentRandom):
@@ -252,26 +252,33 @@ class A2CAgentRNN(A2CAgentRandom):
     def optimize_model(self, observations, actions, returns, advantages, nb_traj):
         # Optimize value function
         # MSE for the values
-        Vs_current = self.value_network(torch.tensor(observations, dtype=torch.float)).flatten()
-        loss_value = F.mse_loss(Vs_current, torch.tensor(returns, dtype=torch.float))
+        observed = torch.tensor(observations, dtype=torch.float)
+        returns_torch = torch.tensor(returns, dtype=torch.float)
+        if self.gpu:
+            observed = observed.cuda()
+            returns_torch = returns_torch.cuda()
+        Vs_current = self.value_network(observed).flatten()
+        loss_value = F.mse_loss(Vs_current, returns_torch)
         if hasattr(self.value_network, 'regualizer'):
-            loss_value += self.value_network.regualizer()['W']
+            regu = self.value_network.regualizer()
+            loss_value += (regu['W'] + regu['z'] + regu['g'] + regu['W-OOB']) * self.lambda_reg
         self.value_network_optimizer.zero_grad()
         loss_value.backward()
         self.value_network_optimizer.step()
 
         # Actor & Entropy loss
-        Policies = self.actor_network(torch.tensor(observations, dtype=torch.float))
+        Policies = self.actor_network(observed)
         Policies_action = torch.stack([x[actions[i]] for i, x in enumerate(Policies)])
         loss_action = - torch.sum(torch.tensor(advantages, dtype=torch.float) * torch.log(Policies_action) +  # actor
                                   0.001 * Policies_action * torch.log(Policies_action)) / nb_traj  # entropy
         if hasattr(self.actor_network, 'regualizer'):
-            loss_action += self.actor_network.regualizer()['W']
+            regu = self.actor_network.regualizer()
+            loss_action += (regu['W'] + regu['z'] + regu['g'] + regu['W-OOB']) * self.lambda_reg
         self.actor_network_optimizer.zero_grad()
         loss_action.backward()
         self.actor_network_optimizer.step()
-
-    def training_batch(self, epochs, batch_size):
+        
+    def training_batch(self, epochs, batch_size, disp=True, gpu=False):
         """Perform a training by batch
 
         Parameters
@@ -289,12 +296,24 @@ class A2CAgentRNN(A2CAgentRandom):
         observation = self.env.reset()
         rewards_test = []
 
+        
+        if gpu:
+            self.actor_network.cuda()
+            self.value_network.cuda()
+            self.gpu = True
+        else:
+            self.actor_network.cpu()
+            self.value_network.cpu()
+            self.gpu = False
+
         for epoch in range(epochs):
             # Lets collect one batch
             for i in range(batch_size):
                 observations[i] = observation
-                actions[i] = self.actor_network.select_action(torch.tensor(observations[i], dtype=torch.float))
-                #                 values[i] = self.value_network.predict(torch.tensor(observations[i] , dtype=torch.float))
+                torch_obs = torch.tensor(observations[i] , dtype=torch.float)
+                if self.gpu: torch_obs = torch_obs.cuda()
+                actions[i] = self.actor_network.select_action(torch_obs)
+        #  values[i] = self.value_network.predict(torch.tensor(observations[i] , dtype=torch.float))
                 # step
                 observation, reward, done, _ = self.env.step(actions[i])
                 if len(observation) == self.env.observation_space.shape[0]:
@@ -303,9 +322,10 @@ class A2CAgentRNN(A2CAgentRandom):
                 rewards[i] = reward
                 if dones[i]:
                     observation = self.env.reset()
-            #    print(self.env.mass)
-
+        #    print(self.env.mass)
+            
             all_observe = torch.tensor(np.concatenate((observations, observation[None])), dtype=torch.float)
+            if self.gpu: all_observe = all_observe.cuda()
             all_values = self.value_network.predict(all_observe)
             values = all_values[:-1]
 
@@ -325,22 +345,151 @@ class A2CAgentRNN(A2CAgentRandom):
             self.optimize_model(observations, actions, returns, advantages, max(1, sum(dones)))
 
             # Test it every 50 epochs
-            if epoch % 50 == 0 or epoch == epochs - 1:
+            if epoch % 20 == 0 or epoch == epochs - 1:
                 rewards_test.append(np.array([self.evaluate(*self.range_eval) for _ in range(50)]))
-                print(
-                    f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
+                if disp: print(f'Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}')
 
                 # Early stopping
-                if rewards_test[-1].mean() > 490 and epoch != epochs - 1:
-                    print('Early stopping !')
+                if rewards_test[-1].mean() > 490 and epoch != epochs -1:
+                    if disp: print('Early stopping !')
                     break
                 observation = self.env.reset()
 
         # Plotting
-        plt.figure()
-        r = pd.DataFrame(
-            (itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))),
-            columns=['Epoch', 'Reward'])
-        sns.lineplot(x="Epoch", y="Reward", data=r, ci='sd')
+        if disp:
+            plt.figure()
+            r = pd.DataFrame((itertools.chain(*(itertools.product([i], rewards_test[i]) for i in range(len(rewards_test))))), columns=['Epoch', 'Reward'])
+            sns.lineplot(x="Epoch", y="Reward", data=r, ci='sd')
+        
+        if disp: print(f'The training was done over a total of {episode_count} episodes')
 
-        print(f'The training was done over a total of {episode_count} episodes')
+
+class Qfunction(stable_nalu.abstract.ExtendedTorchModule):
+    
+    UNIT_NAMES = stable_nalu.layer.GeneralizedLayer.UNIT_NAMES
+
+    def __init__(self, unit_names, input_size=100, hidden_size=[32, 16], output_size=1, eps=1e-7, **kwargs):
+        super().__init__('network', **kwargs)
+        self.unit_names = unit_names
+        self.input_size = input_size
+        self.output_size = output_size
+        self.hidden_size = hidden_size
+        self.eps = eps
+
+        self.layers = [stable_nalu.layer.GeneralizedLayer(input_size, hidden_size[0],
+                       unit_names[0], writer=self.writer, name='layer_1',
+                        eps=eps, **kwargs)]
+        for i in range(len(hidden_size)-1):
+            self.layers.append(
+                stable_nalu.layer.GeneralizedLayer(hidden_size[i], hidden_size[i+1],
+                        unit_names[i+1], writer=self.writer, name=f'layer_{i+2}',
+                        eps=eps, **kwargs)
+            )
+        self.layers.append(
+                stable_nalu.layer.GeneralizedLayer(hidden_size[-1], output_size,
+                        'linear', writer=self.writer, name=f'layer_{len(self.hidden_size)}',
+                        eps=eps, **kwargs)
+            )
+        self.reset_parameters()
+        
+    def parameters(self):
+        prms = []
+        for i in range(len(self.layers)):
+            prms.extend(list(self.layers[i].parameters()))
+        return iter(prms)
+
+    def reset_parameters(self):
+        for l in self.layers:
+            l.reset_parameters()
+
+    def regualizer(self):
+        return super().regualizer()
+
+    def forward(self, input):
+        if len(input.size()) == 1:
+            input = input[None]
+        for l in self.layers:
+            input = l(input)
+        z = input
+        return z
+
+    def extra_repr(self):
+        return 'unit_name={}, input_size={}'.format(
+            self.unit_name, self.input_size
+        )
+    
+    def predict(self, x):
+        return self(x).detach().cpu().numpy().flatten()
+    
+    def select_action(self, state_action_val):
+        probs = F.softmax(state_action_val, dim=0).flatten()
+        choice = torch.multinomial(probs, 1)
+        return choice.detach().cpu().numpy().flatten()[0]
+
+
+class QTrainer:
+
+    def __init__(self, config, range_train, range_eval, Q, reg=100):
+        self.config = config
+        self.env = RandomWrapper(gym.make(config['env_id']), *range_train)
+        make_seed(config['seed'])
+        self.env.seed(config['seed'])
+        self.monitor_env = Monitor(self.env, "./gym-results", force=True, video_callable=lambda episode: True)
+        self.gamma = config['gamma']
+        self.range_train = range_train
+        self.range_eval = range_eval
+
+        self.Q = Q
+        self.optimizer = optim.RMSprop(self.Q.parameters(), lr=config['learning_rate'])
+
+    # def _state_action(self, state):
+    #     t_state = torch.tensor(state, dtype=torch.float)
+    #     return torch.stack([torch.cat([t_state, torch.tensor([0.0])]),
+    #                         torch.cat([t_state, torch.tensor([1.0])])])
+    
+    def optimize_model(self, num_epochs, batch_size):
+        for j in tqdm.tqdm_notebook(range(num_epochs)):
+            observation = self.env.reset()
+            predicted, future = [], []
+            for i in range(batch_size):
+                state_action_val = self.Q(torch.tensor(observation, dtype=torch.float))
+                action = self.Q.select_action(state_action_val)
+                predicted.append(state_action_val[0, action])
+
+                observation, reward, done, _ = self.env.step(action)
+                next_state = self.Q(torch.tensor(observation, dtype=torch.float)).detach().cpu().numpy()
+                future_val = reward + (self.gamma * np.max(next_state, axis=1)[0] if not done else 0)
+                future.append(future_val)
+                if done:
+                    observation = self.env.reset()
+
+            self.optimizer.zero_grad()
+            loss = F.mse_loss(torch.stack(predicted), torch.tensor(future))
+            loss.backward()
+            self.optimizer.step()
+            print(f'Loss : {loss:.2f}')
+
+            if j % 10 == 0:
+                eval_agent(self, 50, self.range_train[0], self.range_train[1], disp=True)
+        
+    def evaluate(self, min_mass, max_mass, render=False):
+        if (min_mass, max_mass) == self.range_train: env = self.env
+        else: env = RandomWrapper(gym.make(self.config['env_id']), min_mass, max_mass)
+        if render: env = Monitor(env, "./gym-results", force=True, video_callable=lambda episode: True)
+        observation = env.reset()
+        reward_episode = 0
+        done = False
+        with torch.no_grad():
+            while not done:
+                state_action_val = self.Q(torch.tensor(observation, dtype=torch.float))
+                action = self.Q.select_action(state_action_val)
+                observation, reward, done, _ = env.step(action)
+                reward_episode += reward
+
+        env.close()
+        if render:
+            show_video("./gym-results")
+            print(f'Reward: {reward_episode}')
+            print(f'masspole : {env.env.env.masspole:.2f}')
+        return reward_episode
+            
