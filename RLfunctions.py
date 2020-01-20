@@ -336,8 +336,6 @@ class A2CAgentRandom(A2CAgent):
                 values[i] = self.value_network.predict(torch.tensor(observations[i], dtype=torch.float))
                 # step
                 observation, reward, done, _ = self.env.step(actions[i])
-                if len(observation) == self.env.observation_space.shape[0]:
-                    observation = np.insert(observation, len(observation), self.env.mass)
                 dones[i] = done
                 rewards[i] = reward
                 if dones[i]:
@@ -418,8 +416,6 @@ class A2CAgentRandom(A2CAgent):
                 policy = self.actor_network(observation)
                 action = torch.multinomial(policy, 1)
                 observation, reward, done, info = env.step(int(action))
-                if len(observation) == self.env.observation_space.shape[0]:
-                    observation = np.insert(observation, len(observation), self.env.mass)
                 observation = torch.tensor(observation, dtype=torch.float)
                 reward_episode += reward
 

@@ -319,8 +319,6 @@ class A2CAgentRNN(A2CAgentRandom):
         #  values[i] = self.value_network.predict(torch.tensor(observations[i] , dtype=torch.float))
                 # step
                 observation, reward, done, _ = self.env.step(actions[i])
-                if len(observation) == self.env.observation_space.shape[0]:
-                    observation = np.insert(observation, len(observation), self.env.mass)
                 dones[i] = done
                 rewards[i] = reward
                 if dones[i]:
@@ -522,7 +520,11 @@ class QTrainer:
                 else:
                     next_state = None
                 # transitions.append([state, action, next_state, reward])
-                self.memory.push(state, action, next_state, reward)
+                if next_state is not None:
+                    td_err = torch.abs(self.Q(next_state)[0, action] - reward - self.gamma * torch.max(self.Qeval(state), 1)[0]).detach().numpy().flatten()[0]
+                    # print(td_err)
+                    if td_err > 0.02:
+                        self.memory.push(state, action, next_state, reward)
                 # print(state, next_state)
                 state = next_state
                 # next_state_action_val = self.Q(torch.tensor(next_state, dtype=torch.float)).detach().cpu().numpy()
