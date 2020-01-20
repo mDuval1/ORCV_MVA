@@ -433,7 +433,7 @@ class A2CAgentRandom(A2CAgent):
 
 def eval_agent(agent, n_eval, min_mass, max_mass, disp=False):
     rws = []
-    for _ in tqdm.tqdm_notebook(range(n_eval), disable=not disp):
+    for _ in tqdm.tqdm_notebook(range(n_eval), disable=True):
         r = agent.evaluate(min_mass, max_mass)
         rws.append(r)
     rws = np.array(rws)

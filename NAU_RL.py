@@ -5,7 +5,10 @@ Helper functions for RL cartpole simulation
 import math
 import base64
 import argparse
+import random
 from pathlib import Path
+from collections import namedtuple
+
 
 import torch
 import torch.nn as nn
@@ -368,7 +371,7 @@ class Qfunction(stable_nalu.abstract.ExtendedTorchModule):
     
     UNIT_NAMES = stable_nalu.layer.GeneralizedLayer.UNIT_NAMES
 
-    def __init__(self, unit_names, input_size=100, hidden_size=[32, 16], output_size=1, eps=1e-7, **kwargs):
+    def __init__(self, unit_names, input_size=100, hidden_size=[32, 16], output_size=2, eps=1e-7, **kwargs):
         super().__init__('network', **kwargs)
         self.unit_names = unit_names
         self.input_size = input_size
@@ -376,20 +379,24 @@ class Qfunction(stable_nalu.abstract.ExtendedTorchModule):
         self.hidden_size = hidden_size
         self.eps = eps
 
-        self.layers = [stable_nalu.layer.GeneralizedLayer(input_size, hidden_size[0],
-                       unit_names[0], writer=self.writer, name='layer_1',
-                        eps=eps, **kwargs)]
+        # self.layers = [stable_nalu.layer.GeneralizedLayer(input_size, hidden_size[0],
+        #                unit_names[0], writer=self.writer, name='layer_1',
+        #                 eps=eps, **kwargs)]
+        # for i in range(len(hidden_size)-1):
+        #     self.layers.append(
+        #         stable_nalu.layer.GeneralizedLayer(hidden_size[i], hidden_size[i+1],
+        #                 unit_names[i+1], writer=self.writer, name=f'layer_{i+2}',
+        #                 eps=eps, **kwargs)
+        #     )
+        # self.layers.append(
+        #         stable_nalu.layer.GeneralizedLayer(hidden_size[-1], output_size,
+        #                 'linear', writer=self.writer, name=f'layer_{len(self.hidden_size)}',
+        #                 eps=eps, **kwargs)
+        #     )
+        self.layers = [nn.Linear(input_size, hidden_size[0])]
         for i in range(len(hidden_size)-1):
-            self.layers.append(
-                stable_nalu.layer.GeneralizedLayer(hidden_size[i], hidden_size[i+1],
-                        unit_names[i+1], writer=self.writer, name=f'layer_{i+2}',
-                        eps=eps, **kwargs)
-            )
-        self.layers.append(
-                stable_nalu.layer.GeneralizedLayer(hidden_size[-1], output_size,
-                        'linear', writer=self.writer, name=f'layer_{len(self.hidden_size)}',
-                        eps=eps, **kwargs)
-            )
+            self.layers.append(nn.Linear(hidden_size[i], hidden_size[i+1]))
+        self.layers.append(nn.Linear(hidden_size[-1], output_size))
         self.reset_parameters()
         
     def parameters(self):
@@ -408,8 +415,12 @@ class Qfunction(stable_nalu.abstract.ExtendedTorchModule):
     def forward(self, input):
         if len(input.size()) == 1:
             input = input[None]
-        for l in self.layers:
-            input = l(input)
+        # for l in self.layers:
+        #     input = l(input)
+        for l in self.layers[:-1]:
+            input = F.relu(l(input))
+        input = self.layers[-1](input)
+
         z = input
         return z
 
@@ -421,15 +432,45 @@ class Qfunction(stable_nalu.abstract.ExtendedTorchModule):
     def predict(self, x):
         return self(x).detach().cpu().numpy().flatten()
     
-    def select_action(self, state_action_val):
-        probs = F.softmax(state_action_val, dim=0).flatten()
-        choice = torch.multinomial(probs, 1)
-        return choice.detach().cpu().numpy().flatten()[0]
+    def select_action(self, state, eps=0.5):
+        # probs = F.softmax(state_action_val, dim=0).flatten()
+        # if eps is None:
+        #     choice = torch.multinomial(probs, 1).detach().cpu().numpy().flatten()[0]
+        # else:
+        if np.random.rand() < eps:
+            choice = torch.tensor([[random.randrange(2)]], dtype=torch.long)
+        else:
+            choice = self(state).max(1)[1].view(1, 1) #.numpy().flatten()
+        return choice
+
+
+Transition = namedtuple('Transition',
+                        ('state', 'action', 'next_state', 'reward'))
+
+class ReplayMemory(object):
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args): #state, action, next_state, reward
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Transition(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
 
 class QTrainer:
 
-    def __init__(self, config, range_train, range_eval, Q, reg=100):
+    def __init__(self, config, range_train, range_eval, Q, Qeval, eps_func=None, reg=100, capacity=100000):
         self.config = config
         self.env = RandomWrapper(gym.make(config['env_id']), *range_train)
         make_seed(config['seed'])
@@ -438,54 +479,148 @@ class QTrainer:
         self.gamma = config['gamma']
         self.range_train = range_train
         self.range_eval = range_eval
+        self.eps_func = eps_func
+        self.memory = ReplayMemory(capacity)
 
         self.Q = Q
+        self.Qeval = Qeval
+        # self.Qeval = type(Q)(Q.unit_names, Q.input_size, Q.hidden_size, Q.output_size, Q.eps) # get a new instance
+        # self.Qeval.load_state_dict(Q.state_dict()) # copy weights and stuff
+        self.Qeval.eval()
         self.optimizer = optim.RMSprop(self.Q.parameters(), lr=config['learning_rate'])
+        self.began_optim = False
 
-    # def _state_action(self, state):
-    #     t_state = torch.tensor(state, dtype=torch.float)
-    #     return torch.stack([torch.cat([t_state, torch.tensor([0.0])]),
-    #                         torch.cat([t_state, torch.tensor([1.0])])])
-    
-    def optimize_model(self, num_epochs, batch_size):
-        for j in tqdm.tqdm_notebook(range(num_epochs)):
+    def _get_state(self, observation, next_observation):
+        state = next_observation - observation
+        state[-1] = observation[-1] #mass
+        return torch.tensor(state, dtype=torch.float).unsqueeze(0)
+
+    def train_model(self, num_episodes, eval_update=10, eval_every=50, batch_size=128):
+        rewards = [0]
+        for i in tqdm.tqdm_notebook(range(num_episodes)):
             observation = self.env.reset()
-            predicted, future = [], []
-            for i in range(batch_size):
-                state_action_val = self.Q(torch.tensor(observation, dtype=torch.float))
-                action = self.Q.select_action(state_action_val)
-                predicted.append(state_action_val[0, action])
+            next_observation = observation
+            state = self._get_state(observation, next_observation)
+            done = False
+            reward_i = 0
+            # transitions = []
+            while not done:
+                # state_action_val = self.Q(state)
+                if self.eps_func is not None:
+                    eps = self.eps_func(i/num_episodes)
+                else:
+                    eps = None
+                action = self.Q.select_action(state, eps=eps)
 
-                observation, reward, done, _ = self.env.step(action)
-                next_state = self.Q(torch.tensor(observation, dtype=torch.float)).detach().cpu().numpy()
-                future_val = reward + (self.gamma * np.max(next_state, axis=1)[0] if not done else 0)
-                future.append(future_val)
+                # predicted.append(state_action_val[0, action])
+                observation = next_observation
+                next_observation, reward, done, _ = self.env.step(action.item())
+                reward_i += reward
+                reward = torch.tensor([reward])
+                if not done:
+                    next_state = self._get_state(observation, next_observation)
+                else:
+                    next_state = None
+                # transitions.append([state, action, next_state, reward])
+                self.memory.push(state, action, next_state, reward)
+                # print(state, next_state)
+                state = next_state
+                # next_state_action_val = self.Q(torch.tensor(next_state, dtype=torch.float)).detach().cpu().numpy()
+                # future_val = reward + (self.gamma * np.max(next_state_action_val, axis=1)[0] if not done else 0)
+                # future.append(future_val)
                 if done:
-                    observation = self.env.reset()
-
-            self.optimizer.zero_grad()
-            loss = F.mse_loss(torch.stack(predicted), torch.tensor(future))
-            loss.backward()
-            self.optimizer.step()
-            print(f'Loss : {loss:.2f}')
-
-            if j % 10 == 0:
+                    break
+            
+            # if np.median(np.array(rewards)) < reward_i:
+            #     rewards.append(reward_i)
+            #     for s, a, n, r in transitions:
+            #         self.memory.push(s, a, n, r)
+            self.optimize_model(batch_size)
+            if i % eval_update == 0:
+                # print(list(self.Qeval.parameters())[0][0])
+                self.Qeval.load_state_dict(self.Q.state_dict())
+            if i % eval_every == 0:
                 eval_agent(self, 50, self.range_train[0], self.range_train[1], disp=True)
+                # print(f'median train rewards : {np.median(np.array(rewards)):.3f}')
+                # print(list(self.Qeval.parameters())[0][0])
+                print()
+            
+    def optimize_model(self, batch_size):
+        if len(self.memory) < batch_size:
+            return
+        if len(self.memory) >= batch_size and not self.began_optim:
+            print('optimizing')
+            self.began_optim = True
+        transitions = self.memory.sample(batch_size)
+        batch = Transition(*zip(*transitions))
+
+        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                          batch.next_state)), dtype=torch.bool)
+        non_final_next_states = torch.cat([s for s in batch.next_state
+                                                if s is not None])
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
+
+        # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
+        # columns of actions taken. These are the actions which would've been taken
+        # for each batch state according to policy_net
+        state_action_values = self.Q(state_batch).gather(1, action_batch)
+
+        # Compute V(s_{t+1}) for all next states.
+        # Expected values of actions for non_final_next_states are computed based
+        # on the "older" target_net; selecting their best reward with max(1)[0].
+        # This is merged based on the mask, such that we'll have either the expected
+        # state value or 0 in case the state was final.
+        next_state_values = torch.zeros(batch_size)
+        next_state_values[non_final_mask] = self.Qeval(non_final_next_states).max(1)[0].detach()
+        # Compute the expected Q values
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
+        # print(np.stack((state_action_values.detach().numpy(),
+        #         expected_state_action_values.unsqueeze(1).detach().numpy())))
+        # Compute Huber loss
+        # loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+        loss = F.mse_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+        # Optimize the model
+        self.optimizer.zero_grad()
+        loss.backward()
+        total_norm = 0
+        for p in self.Q.parameters():
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** (1. / 2)
+        # print(f'Loss : {loss:.3f} - Gradient norm : {total_norm:.3f}')
+        # for param in policy_net.parameters():
+        #     param.grad.data.clamp_(-1, 1)
+        self.optimizer.step()
+        # self.optimizer.zero_grad()
+        # loss = F.mse_loss(torch.stack(predicted), torch.tensor(future))
+        # loss.backward()
+        # self.optimizer.step()
+        # print(f'Loss : {loss:.2f}')
+
+        
         
     def evaluate(self, min_mass, max_mass, render=False):
         if (min_mass, max_mass) == self.range_train: env = self.env
         else: env = RandomWrapper(gym.make(self.config['env_id']), min_mass, max_mass)
         if render: env = Monitor(env, "./gym-results", force=True, video_callable=lambda episode: True)
         observation = env.reset()
+        next_observation = observation
+        state = self._get_state(observation, next_observation)
         reward_episode = 0
         done = False
+        actions = []
         with torch.no_grad():
             while not done:
-                state_action_val = self.Q(torch.tensor(observation, dtype=torch.float))
-                action = self.Q.select_action(state_action_val)
-                observation, reward, done, _ = env.step(action)
+                # state_action_val = self.Q(state)
+                action = self.Q.select_action(state, eps=0)
+                actions.append(action[0, 0])
+                observation = next_observation
+                next_observation, reward, done, _ = env.step(action.item())
+                state = self._get_state(observation, next_observation)
                 reward_episode += reward
-
+        # print(np.array(actions))
         env.close()
         if render:
             show_video("./gym-results")
